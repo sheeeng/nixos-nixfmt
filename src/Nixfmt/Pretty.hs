@@ -48,6 +48,7 @@ import Nixfmt.Types (
   Expression (..),
   Item (..),
   Items (..),
+  LanguageElement (..),
   Leaf,
   ParamAttr (..),
   Parameter (..),
@@ -70,6 +71,7 @@ import Nixfmt.Types (
   tokenText,
  )
 import Nixfmt.Util (isSpaces)
+import Text.Megaparsec (Pos)
 import Prelude hiding (String)
 
 toLineComment :: TrailingComment -> Trivium
@@ -87,6 +89,10 @@ moveTrailingCommentUp a = a
 -- Prepend extra trivia to a token's existing preTrivia
 prependTrivia :: Trivia -> Ann a -> Ann a
 prependTrivia extra a@Ann{preTrivia} = a{preTrivia = extra <> preTrivia}
+
+-- | Get the source line of the first token in a language element
+firstTokenLine :: (LanguageElement a) => a -> Pos
+firstTokenLine = snd . mapFirstToken' (\a -> (a, sourceLine a))
 
 instance Pretty TrailingComment where
   pretty (TrailingComment c) =
@@ -402,17 +408,9 @@ instance Pretty Parameter where
       handleTrailingComma (x : xs) = pretty x : handleTrailingComma xs
 
       sep =
-        -- If the braces are on different lines, keep them like that
-        if sourceLine bopen /= sourceLine bclose
-          then hardline
-          else case attrs of
-            [ParamEllipsis _] -> line
-            -- Attributes must be without default
-            [ParamAttr _ Nothing _] -> line
-            [ParamAttr _ Nothing _, ParamEllipsis _] -> line
-            [ParamAttr _ Nothing _, ParamAttr _ Nothing _] -> line
-            [ParamAttr _ Nothing _, ParamAttr _ Nothing _, ParamEllipsis _] -> line
-            _ -> hardline
+        if canFlattenAttrs bopen attrs bclose
+          then line
+          else hardline
   pretty (ContextParameter param1 at param2) =
     pretty param1 <> pretty at <> pretty param2
 
@@ -608,6 +606,27 @@ prettyWith _ (With with expr0 semicolon expr1) =
     <> pretty expr1
 prettyWith _ _ = error "unreachable"
 
+-- Check if a set of parameter attributes is simple enough to fit on one line:
+-- braces must be on the same source line, and up to 2 attrs without defaults,
+-- with an optional ellipsis.
+canFlattenAttrs :: Ann a -> [ParamAttr] -> Ann b -> Bool
+canFlattenAttrs bopen attrs bclose
+  | sourceLine bopen /= sourceLine bclose = False -- If the braces are on different lines, keep them like that
+  | hasTrivia bclose = False
+  | any paramHasTrivia attrs = False
+  | otherwise = case attrs of
+      [] -> True
+      [ParamEllipsis _] -> True
+      -- Attributes must be without default
+      [ParamAttr _ Nothing _] -> True
+      [ParamAttr _ Nothing _, ParamEllipsis _] -> True
+      [ParamAttr _ Nothing _, ParamAttr _ Nothing _] -> True
+      [ParamAttr _ Nothing _, ParamAttr _ Nothing _, ParamEllipsis _] -> True
+      _ -> False
+  where
+    paramHasTrivia (ParamAttr name _ comma) = hasTrivia name || maybe False hasTrivia comma
+    paramHasTrivia (ParamEllipsis dots) = hasTrivia dots
+
 isAbsorbableExpr :: Expression -> Bool
 isAbsorbableExpr expr = case expr of
   (Term t) | isAbsorbableTerm t -> True
@@ -615,6 +634,13 @@ isAbsorbableExpr expr = case expr of
   -- Absorb function declarations but only those with simple parameter(s)
   (Abstraction (IDParameter _) _ (Term t)) | isAbsorbable t -> True
   (Abstraction (IDParameter _) _ body@(Abstraction{})) -> isAbsorbableExpr body
+  -- Absorb function declarations with attribute set parameters if the attribute set is simple enough, and the body is absorbable.
+  (Abstraction (SetParameter bopen attrs bclose) colon body)
+    | canFlattenAttrs bopen attrs bclose,
+      not (hasPreTrivia bopen), -- Comments on the opening brace force a line break, preventing absorption
+      isNothing (trailComment bopen),
+      sourceLine colon == firstTokenLine body -> -- If the colon and body are on different lines, keep them like that
+        isAbsorbableExpr body
   _ -> False
 
 isAbsorbable :: Term -> Bool
@@ -798,7 +824,15 @@ instance Pretty Expression where
       absorbAbs depth x =
         (if depth <= 2 then line else hardline) <> pretty x
 
-  -- Attrset parameter
+  -- Set parameter: absorb if flattenable and on the same line, force multiline otherwise
+  pretty (Abstraction param@(SetParameter bopen attrs bclose) colon body)
+    | canFlattenAttrs bopen attrs bclose,
+      sourceLine colon == firstTokenLine body,
+      isAbsorbableExpr body =
+        pretty param <> pretty colon <> hardspace <> group' Priority (pretty body)
+    | sourceLine colon /= firstTokenLine body =
+        pretty param <> pretty colon <> hardline <> pretty body
+  -- Attrset parameter with absorbable body
   pretty (Abstraction param colon (Term t))
     | isAbsorbable t =
         pretty param <> pretty colon <> line <> group (prettyTermWide t)
