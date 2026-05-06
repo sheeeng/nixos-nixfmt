@@ -84,6 +84,10 @@ moveTrailingCommentUp a@Ann{preTrivia, trailComment = Just post} =
     }
 moveTrailingCommentUp a = a
 
+-- Prepend extra trivia to a token's existing preTrivia
+prependTrivia :: Trivia -> Ann a -> Ann a
+prependTrivia extra a@Ann{preTrivia} = a{preTrivia = extra <> preTrivia}
+
 instance Pretty TrailingComment where
   pretty (TrailingComment c) =
     hardspace <> trailingComment ("# " <> c) <> hardline
@@ -655,7 +659,7 @@ absorbParen open@Ann{trailComment = post'} expr close@Ann{preTrivia = pre''} =
               nest $
                 pretty
                   ( mapFirstToken
-                      (\a@Ann{preTrivia} -> a{preTrivia = maybe Seq.empty (Seq.singleton . toLineComment) post' <> preTrivia})
+                      (prependTrivia (maybe Seq.empty (Seq.singleton . toLineComment) post'))
                       expr
                   )
                   -- Move any leading comments on the closing parenthesis up into the nest
@@ -735,14 +739,20 @@ instance Pretty Expression where
       convertTrailing Nothing = []
       convertTrailing (Just (TrailingComment t)) = [LineComment (" " <> t)]
 
+      -- Move trailing comment on `in` and any leading trivia into the body's
+      -- first token preTrivia, so that subsequent passes see the same structure.
+      expr' =
+        mapFirstToken
+          (prependTrivia (preTrivia <> convertTrailing trailComment))
+          expr
+
       letPart = group $ pretty let_ <> hardline <> letBody
       letBody = nest $ renderItems hardline binders
       inPart =
         group $
           pretty in_
             <> hardline
-            <> pretty (preTrivia <> convertTrailing trailComment)
-            <> pretty expr
+            <> pretty expr'
   pretty (Assert assert cond semicolon expr) =
     group $
       -- Render the assert as if it is was just a function (literally)
