@@ -552,7 +552,7 @@ prettyOp forceFirstTermWide operation op =
       -- Force nested operations to start on a new line
       absorbOperation x@(Operation{}) = group' RegularG $ line <> pretty x
       -- Force applications to start on a new line if more than the last argument is multiline
-      absorbOperation (Application f a) = group $ prettyApp False line False f a
+      absorbOperation (Application f a) = group $ hardspace <> prettyApp False line False f a
       absorbOperation x = hardspace <> pretty x
 
       prettyOperation :: (Maybe Leaf, Expression) -> Doc
