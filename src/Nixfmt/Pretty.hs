@@ -248,6 +248,9 @@ prettyTerm (Selection term selectors rest) =
   where
     -- Selection (`foo.bar.baz`) case distinction on the first element (`foo`):
     sep = case term of
+      -- Numeric literals need a space before `.` to avoid re-lexing as float (e.g. `1.a` vs `1 .a`)
+      (Token Ann{value = Integer _}) -> hardspace
+      (Token Ann{value = Float _}) -> hardspace
       -- If it is an ident, keep it all together
       (Token _) -> mempty
       -- If it is a parenthesized expression, maybe add a line break
