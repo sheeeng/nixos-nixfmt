@@ -115,14 +115,25 @@ renderItems separator (Items items) = go items
   where
     go [] = mempty
     go [item] = pretty item
-    -- Special case: language annotation comment followed by string item
-    go (Comments [LanguageAnnotation lang] : Item stringItem : rest) =
-      pretty (LanguageAnnotation lang)
-        <> hardspace
-        <> group stringItem
-        <> if null rest then mempty else separator <> go rest
+    -- Special case: language annotation comment followed by string item.
+    -- The annotation may be preceded by other trivia (e.g. line comments),
+    -- which we render normally before attaching the annotation to the string.
+    go (Comments trivia : Item stringItem : rest)
+      | (preceding, [LanguageAnnotation lang]) <- splitLangAnnotation trivia =
+          pretty preceding
+            <> pretty (LanguageAnnotation lang)
+            <> hardspace
+            <> group stringItem
+            <> if null rest then mempty else separator <> go rest
     go (item : rest) =
       pretty item <> if null rest then mempty else separator <> go rest
+
+    -- If the last element of a trivia sequence is a LanguageAnnotation,
+    -- return it separately from the preceding trivia.
+    splitLangAnnotation :: Trivia -> (Trivia, [Trivium])
+    splitLangAnnotation trivia = case Seq.viewr trivia of
+      (preceding Seq.:> la@(LanguageAnnotation _)) -> (preceding, [la])
+      _ -> (trivia, [])
 
 hasOnlyComments :: Items a -> Bool
 hasOnlyComments (Items xs) = not (null xs) && all isComment xs
