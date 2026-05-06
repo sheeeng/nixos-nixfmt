@@ -631,7 +631,13 @@ isAbsorbable (List paropen items _)
   | hasTrivia paropen || hasOnlyComments items = True
 isAbsorbable (Set _ paropen items _)
   | hasTrivia paropen || hasOnlyComments items = True
-isAbsorbable (Parenthesized (LoneAnn _) (Term t) _) = isAbsorbable t
+-- Parenthesized expressions with comments on the inner term are not absorbable,
+-- except for language annotations (/* lua */, etc.) which can stay compact.
+isAbsorbable (Parenthesized (LoneAnn _) (Term t) _) =
+  matchFirstToken (all isLangAnnotation . preTrivia) t && isAbsorbable t
+  where
+    isLangAnnotation (LanguageAnnotation _) = True
+    isLangAnnotation _ = False
 isAbsorbable _ = False
 
 isAbsorbableTerm :: Term -> Bool
