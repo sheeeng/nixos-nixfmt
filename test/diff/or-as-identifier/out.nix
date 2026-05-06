@@ -5,9 +5,12 @@ let
   or = a: b: a;
 in
 [
-  (fold or [ ] [
-    true
-    false
-  ])
+  (fold or
+    [ ]
+    [
+      true
+      false
+    ]
+  )
   (t or a)
 ]

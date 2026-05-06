@@ -402,10 +402,11 @@ term :: Parser Term
 term = label "term" $ do
   !t <- simpleTerm
   sel <- selectorPath'
-  def <- optional (liftM2 (,) (reserved KOr) term)
-  return $ case sel of
-    [] -> t
-    _ -> Selection t sel def
+  case sel of
+    [] -> return t
+    _ -> do
+      def <- optional (liftM2 (,) (reserved KOr) term)
+      return $ Selection t sel def
 
 items :: Parser a -> Parser (Items a)
 items p = Items <$!> many (item p) <> (toList <$> optional itemComment)
