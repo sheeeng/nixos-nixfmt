@@ -160,4 +160,9 @@
     a,    # comment
     b ? 2,# comment
   }: _)
+
+  # Trailing comment after multiline string must not break idempotency
+  "
+" # c
+  t
 ]

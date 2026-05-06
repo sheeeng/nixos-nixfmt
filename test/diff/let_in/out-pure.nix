@@ -72,6 +72,14 @@ let
     # qux
     null;
 
+  # Trailing comment on `in` with a long body must be idempotent
+  a =
+    let
+    in
+    # c
+    f xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+      g;
+
 in
 
 a

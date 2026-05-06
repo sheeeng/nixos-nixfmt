@@ -165,4 +165,13 @@
     /* bash */ ''
       echo "Hello"
     '';
+
+  # Division followed by block comment must not merge into `//`
+  divLangAnnotation = a / /* sh */ "" p;
+
+  # Language annotation after other trivia must not split from string
+  annotationAfterTrivia = [
+    # x
+    /* sh */ "ls"
+  ];
 }
