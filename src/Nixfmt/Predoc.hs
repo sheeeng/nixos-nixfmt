@@ -1,5 +1,6 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StrictData #-}
 
@@ -45,11 +46,15 @@ import Data.List (intersperse)
 import Data.List.NonEmpty (NonEmpty (..), singleton, (<|))
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Maybe (fromMaybe)
+import qualified Data.Sequence as Seq
 import Data.Text as Text (Text, concat, length, replicate, strip)
 import GHC.Stack (HasCallStack)
 import Nixfmt.Types (
+  Ann (..),
   LanguageElement,
+  Trivium (..),
   mapAllTokens,
+  mapFirstToken,
   removeLineInfo,
  )
 
@@ -356,6 +361,10 @@ layout width indentWidth strict =
     . layoutGreedy width indentWidth
     . fixup
     . pretty
+    -- Strip leading empty lines so they don't affect layout decisions.
+    -- They are removed from the final output by Text.strip anyway, but if
+    -- left in the Doc they can cause non-idempotent formatting.
+    . mapFirstToken (\a@Ann{preTrivia} -> a{preTrivia = Seq.dropWhileL (== EmptyLine) preTrivia})
     -- In strict mode, set the line number of all tokens to zero
     . (if strict then mapAllTokens removeLineInfo else id)
 
