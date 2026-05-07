@@ -84,6 +84,10 @@ moveTrailingCommentUp a@Ann{preTrivia, trailComment = Just post} =
     }
 moveTrailingCommentUp a = a
 
+-- Prepend extra trivia to a token's existing preTrivia
+prependTrivia :: Trivia -> Ann a -> Ann a
+prependTrivia extra a@Ann{preTrivia} = a{preTrivia = extra <> preTrivia}
+
 instance Pretty TrailingComment where
   pretty (TrailingComment c) =
     hardspace <> trailingComment ("# " <> c) <> hardline
@@ -115,14 +119,25 @@ renderItems separator (Items items) = go items
   where
     go [] = mempty
     go [item] = pretty item
-    -- Special case: language annotation comment followed by string item
-    go (Comments [LanguageAnnotation lang] : Item stringItem : rest) =
-      pretty (LanguageAnnotation lang)
-        <> hardspace
-        <> group stringItem
-        <> if null rest then mempty else separator <> go rest
+    -- Special case: language annotation comment followed by string item.
+    -- The annotation may be preceded by other trivia (e.g. line comments),
+    -- which we render normally before attaching the annotation to the string.
+    go (Comments trivia : Item stringItem : rest)
+      | (preceding, [LanguageAnnotation lang]) <- splitLangAnnotation trivia =
+          pretty preceding
+            <> pretty (LanguageAnnotation lang)
+            <> hardspace
+            <> group stringItem
+            <> if null rest then mempty else separator <> go rest
     go (item : rest) =
       pretty item <> if null rest then mempty else separator <> go rest
+
+    -- If the last element of a trivia sequence is a LanguageAnnotation,
+    -- return it separately from the preceding trivia.
+    splitLangAnnotation :: Trivia -> (Trivia, [Trivium])
+    splitLangAnnotation trivia = case Seq.viewr trivia of
+      (preceding Seq.:> la@(LanguageAnnotation _)) -> (preceding, [la])
+      _ -> (trivia, [])
 
 hasOnlyComments :: Items a -> Bool
 hasOnlyComments (Items xs) = not (null xs) && all isComment xs
@@ -248,6 +263,9 @@ prettyTerm (Selection term selectors rest) =
   where
     -- Selection (`foo.bar.baz`) case distinction on the first element (`foo`):
     sep = case term of
+      -- Numeric literals need a space before `.` to avoid re-lexing as float (e.g. `1.a` vs `1 .a`)
+      (Token Ann{value = Integer _}) -> hardspace
+      (Token Ann{value = Float _}) -> hardspace
       -- If it is an ident, keep it all together
       (Token _) -> mempty
       -- If it is a parenthesized expression, maybe add a line break
@@ -549,7 +567,7 @@ prettyOp forceFirstTermWide operation op =
       -- Force nested operations to start on a new line
       absorbOperation x@(Operation{}) = group' RegularG $ line <> pretty x
       -- Force applications to start on a new line if more than the last argument is multiline
-      absorbOperation (Application f a) = group $ prettyApp False line False f a
+      absorbOperation (Application f a) = group $ hardspace <> prettyApp False line False f a
       absorbOperation x = hardspace <> pretty x
 
       prettyOperation :: (Maybe Leaf, Expression) -> Doc
@@ -617,7 +635,13 @@ isAbsorbable (List paropen items _)
   | hasTrivia paropen || hasOnlyComments items = True
 isAbsorbable (Set _ paropen items _)
   | hasTrivia paropen || hasOnlyComments items = True
-isAbsorbable (Parenthesized (LoneAnn _) (Term t) _) = isAbsorbable t
+-- Parenthesized expressions with comments on the inner term are not absorbable,
+-- except for language annotations (/* lua */, etc.) which can stay compact.
+isAbsorbable (Parenthesized (LoneAnn _) (Term t) _) =
+  matchFirstToken (all isLangAnnotation . preTrivia) t && isAbsorbable t
+  where
+    isLangAnnotation (LanguageAnnotation _) = True
+    isLangAnnotation _ = False
 isAbsorbable _ = False
 
 isAbsorbableTerm :: Term -> Bool
@@ -635,7 +659,7 @@ absorbParen open@Ann{trailComment = post'} expr close@Ann{preTrivia = pre''} =
               nest $
                 pretty
                   ( mapFirstToken
-                      (\a@Ann{preTrivia} -> a{preTrivia = maybe Seq.empty (Seq.singleton . toLineComment) post' <> preTrivia})
+                      (prependTrivia (maybe Seq.empty (Seq.singleton . toLineComment) post'))
                       expr
                   )
                   -- Move any leading comments on the closing parenthesis up into the nest
@@ -715,14 +739,20 @@ instance Pretty Expression where
       convertTrailing Nothing = []
       convertTrailing (Just (TrailingComment t)) = [LineComment (" " <> t)]
 
+      -- Move trailing comment on `in` and any leading trivia into the body's
+      -- first token preTrivia, so that subsequent passes see the same structure.
+      expr' =
+        mapFirstToken
+          (prependTrivia (preTrivia <> convertTrailing trailComment))
+          expr
+
       letPart = group $ pretty let_ <> hardline <> letBody
       letBody = nest $ renderItems hardline binders
       inPart =
         group $
           pretty in_
             <> hardline
-            <> pretty (preTrivia <> convertTrailing trailComment)
-            <> pretty expr
+            <> pretty expr'
   pretty (Assert assert cond semicolon expr) =
     group $
       -- Render the assert as if it is was just a function (literally)
